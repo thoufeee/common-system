@@ -9,3 +9,11 @@ const (
 	StatusBlocked   = "BLOCKED"
 	StatusCompleted = "COMPLETED"
 )
+
+// user status
+type UserStatus string
+
+const (
+	UserActive  UserStatus = "ACTIVE"
+	UserBlocked UserStatus = "BLOCKED"
+)

@@ -1,4 +1,4 @@
-module common-system
+module github.com/thoufeee/common-system
 
 go 1.24.10
 
