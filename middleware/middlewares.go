@@ -1,77 +1,97 @@
-package middleware
-
-// for finding request id ///
+package logger
 
 import (
-	"log"
+	"context"
+	"log/slog"
+	"net/http"
 	"runtime/debug"
 	"time"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
 
-func RequestID() fiber.Handler {
-	return func(c *fiber.Ctx) error {
-		requestID := c.Get("X-Request-ID")
+type contextKey string
+
+const loggerContextKey contextKey = "logger"
+
+// GetLogger retrieves request-specific logger.
+func GetLogger(ctx context.Context) *slog.Logger {
+	if logger, ok := ctx.Value(loggerContextKey).(*slog.Logger); ok {
+		return logger
+	}
+
+	return slog.Default()
+}
+
+// RequestID middleware
+func RequestID() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		requestID := c.GetHeader("X-Request-ID")
 
 		if requestID == "" {
 			requestID = uuid.NewString()
 		}
 
-		c.Locals("requestID", requestID)
-		c.Set("X-Request-ID", requestID)
+		c.Set("requestID", requestID)
+		c.Header("X-Request-ID", requestID)
 
-		return c.Next()
+		logger := slog.Default().With(
+			"request_id", requestID,
+		)
+
+		ctx := context.WithValue(
+			c.Request.Context(),
+			loggerContextKey,
+			logger,
+		)
+
+		c.Request = c.Request.WithContext(ctx)
+
+		c.Next()
 	}
 }
 
-// identify the request and response (api) ////
-
-func Logger() fiber.Handler {
-	return func(c *fiber.Ctx) error {
+// Logger middleware
+func Logger() gin.HandlerFunc {
+	return func(c *gin.Context) {
 		start := time.Now()
 
-		err := c.Next()
+		c.Next()
 
 		duration := time.Since(start)
 
-		requestID, _ := c.Locals("requestID").(string)
+		logger := GetLogger(c.Request.Context())
 
-		log.Printf(
-			"Method=%s Path=%s Status=%d Duration=%s RequestID=%s",
-			c.Method(),
-			c.Path(),
-			c.Response().StatusCode(),
-			duration,
-			requestID,
+		logger.Info(
+			"HTTP request completed",
+			"method", c.Request.Method,
+			"path", c.Request.URL.Path,
+			"status", c.Writer.Status(),
+			"duration", duration.String(),
+			"client_ip", c.ClientIP(),
 		)
-
-		return err
 	}
 }
 
-// identifying the panics ////
+// Recovery middleware
+func Recovery() gin.HandlerFunc {
+	return gin.CustomRecovery(func(c *gin.Context, recovered any) {
+		logger := GetLogger(c.Request.Context())
 
-func Recovery() fiber.Handler {
-	return func(c *fiber.Ctx) error {
-		defer func() {
-			if err := recover(); err != nil {
-				log.Printf(
-					"Panic recovered: %v\n%s",
-					err,
-					debug.Stack(),
-				)
+		logger.Error(
+			"panic recovered",
+			"error", recovered,
+			"stack", string(debug.Stack()),
+		)
 
-				_ = c.Status(fiber.StatusInternalServerError).JSON(
-					fiber.Map{
-						"success": false,
-						"message": "Internal server error",
-					},
-				)
-			}
-		}()
-
-		return c.Next()
-	}
+		c.AbortWithStatusJSON(
+			http.StatusInternalServerError,
+			gin.H{
+				"success": false,
+				"code":    "INTERNAL_SERVER_ERROR",
+				"message": "Internal server error",
+			},
+		)
+	})
 }
