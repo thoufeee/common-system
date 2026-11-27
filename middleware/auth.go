@@ -23,33 +23,41 @@ type AccessClaims struct {
 }
 
 // Authentication validates the JWT access token
+
 func Authentication(jwtSecret string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 
-		// Get Authorization header
+		var tokenString string
+
+		//   check the Authorization header
 		authHeader := c.GetHeader("Authorization")
 
-		if authHeader == "" {
-			unauthorized(c, "Authorization header is required")
-			return
+		if authHeader != "" {
+			parts := strings.SplitN(authHeader, " ", 2)
+
+			if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+				unauthorized(c, "Invalid authorization format")
+				return
+			}
+
+			tokenString = strings.TrimSpace(parts[1])
+		} else {
+			// If no Authorization header, check the access cookie
+			cookieToken, err := c.Cookie("access_token")
+			if err != nil {
+				unauthorized(c, "Access token is required")
+				return
+			}
+
+			tokenString = cookieToken
 		}
-
-		// Extract Bearer token
-		parts := strings.SplitN(authHeader, " ", 2)
-
-		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
-			unauthorized(c, "Invalid authorization format")
-			return
-		}
-
-		tokenString := strings.TrimSpace(parts[1])
 
 		if tokenString == "" {
 			unauthorized(c, "Access token is required")
 			return
 		}
 
-		// Validate JWT
+		//  Validate JWT
 		claims := &AccessClaims{}
 
 		token, err := jwt.ParseWithClaims(
@@ -68,10 +76,9 @@ func Authentication(jwtSecret string) gin.HandlerFunc {
 			return
 		}
 
-		// Validate required claims
+		// Validate required claim
 		userID := claims.UserID
 
-		// Support standard JWT subject as a fallback
 		if userID == "" {
 			userID = claims.Subject
 		}
@@ -85,7 +92,6 @@ func Authentication(jwtSecret string) gin.HandlerFunc {
 		c.Set(string(UserIDKey), userID)
 		c.Set(string(UserRoleKey), claims.Role)
 
-		// Also attach identity to request context
 		ctx := context.WithValue(
 			c.Request.Context(),
 			UserIDKey,
